@@ -406,6 +406,9 @@ option { background: #111; }
 }
 .toast.ok  { border-color: var(--neon-border); color: var(--neon); }
 .toast.err { border-color: rgba(255,69,69,0.3); color: var(--red); }
+
+@keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+.img-dropzone.uploading { pointer-events: none; opacity: 0.7; }
 @keyframes toastIn { from{transform:translateY(8px);opacity:0} to{transform:translateY(0);opacity:1} }
 
 /* ── RESPONSIVE MODAL ── */
@@ -591,26 +594,58 @@ function AuthScreen({ onLogin }) {
 // ═══════════════════════════════════════
 //  IMAGE DROPZONE COMPONENT
 // ═══════════════════════════════════════
+// ImgBB API key — gratuita, 32MB max, immagini permanenti
+const IMGBB_KEY = '0a58caeaf248939620b11ff97a4a9260'; // https://api.imgbb.com/
+
+async function uploadToImgBB(file) {
+  const base64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = e => res(e.target.result.split(',')[1]);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+  const form = new FormData();
+  form.append('image', base64);
+  const resp = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_KEY}`, {
+    method: 'POST', body: form
+  });
+  const data = await resp.json();
+  if (data.success) return data.data.url;
+  throw new Error(data.error?.message || 'Upload fallito');
+}
+
 function ImageDropzone({ value, onChange }) {
-  const [dragover, setDragover] = useState(false);
+  const [dragover,    setDragover]    = useState(false);
+  const [uploading,   setUploading]   = useState(false);
+  const [uploadError, setUploadError] = useState('');
   const inputRef = useRef();
 
-  const readFile = (file) => {
+  const handleFile = async (file) => {
     if (!file || !file.type.startsWith('image/')) return;
-    const reader = new FileReader();
-    reader.onload = (e) => onChange(e.target.result);
-    reader.readAsDataURL(file);
+    if (IMGBB_KEY === 'INCOLLA_QUI_LA_TUA_API_KEY') {
+      setUploadError('// imposta la chiave ImgBB nel codice');
+      return;
+    }
+    setUploading(true);
+    setUploadError('');
+    try {
+      const url = await uploadToImgBB(file);
+      onChange(url);
+    } catch(e) {
+      setUploadError('// errore upload: ' + e.message);
+    } finally {
+      setUploading(false);
+    }
   };
 
   const onDrop = (e) => {
     e.preventDefault(); setDragover(false);
-    const file = e.dataTransfer.files?.[0];
-    readFile(file);
+    handleFile(e.dataTransfer.files?.[0]);
   };
 
   const onPaste = (e) => {
     const item = [...(e.clipboardData?.items||[])].find(i => i.type.startsWith('image/'));
-    if (item) { e.preventDefault(); readFile(item.getAsFile()); }
+    if (item) { e.preventDefault(); handleFile(item.getAsFile()); }
   };
 
   useEffect(() => {
@@ -620,18 +655,23 @@ function ImageDropzone({ value, onChange }) {
 
   return (
     <div
-      className={`img-dropzone${dragover ? ' dragover' : ''}${value ? ' has-img' : ''}`}
+      className={`img-dropzone${dragover ? ' dragover' : ''}${value ? ' has-img' : ''}${uploading ? ' uploading' : ''}`}
       onDragOver={e => { e.preventDefault(); setDragover(true); }}
       onDragLeave={() => setDragover(false)}
       onDrop={onDrop}
-      onClick={() => !value && inputRef.current?.click()}
+      onClick={() => !value && !uploading && inputRef.current?.click()}
     >
       <input ref={inputRef} type="file" accept="image/*" style={{display:'none'}}
-        onChange={e => readFile(e.target.files?.[0])} />
-      {value ? (
+        onChange={e => handleFile(e.target.files?.[0])} />
+      {uploading ? (
+        <div className="dropzone-empty">
+          <div className="dropzone-icon" style={{animation:'spin 1s linear infinite'}}>⟳</div>
+          <div>caricamento immagine...</div>
+        </div>
+      ) : value ? (
         <>
           <img className="dropzone-preview" src={value} alt="cover" />
-          <button className="dropzone-remove" onClick={e => { e.stopPropagation(); onChange(''); }}>
+          <button className="dropzone-remove" onClick={e => { e.stopPropagation(); onChange(''); setUploadError(''); }}>
             ✕ rimuovi
           </button>
         </>
@@ -641,6 +681,7 @@ function ImageDropzone({ value, onChange }) {
           <div>trascina un&apos;immagine qui</div>
           <div>oppure clicca per scegliere</div>
           <div style={{marginTop:'2px', fontSize:'10px'}}>// anche Ctrl+V per incollare</div>
+          {uploadError && <div style={{color:'var(--red)', marginTop:'6px'}}>{uploadError}</div>}
         </div>
       )}
     </div>
